@@ -1,0 +1,206 @@
+{
+  "provider": "image2",
+  "kind": "persistent-scene-library",
+  "version": "2026-06-04",
+  "created_from_run": "black-puffer-vest-ecommerce-20260604-210749",
+  "usage": "Reusable scene references for image2 scene-background-fusion. Select by scenario, product category, shot role, season, location, and desired proof moment.",
+  "matching_policy": {
+    "primary_keys": [
+      "scenarios",
+      "categories",
+      "roles",
+      "season_tags",
+      "location_tags",
+      "tone_tags"
+    ],
+    "selection_order": [
+      "video scenario",
+      "shot role",
+      "product category",
+      "usage scenario",
+      "season",
+      "tone and lighting"
+    ],
+    "fallback": "If no generated reference matches, use the closest prompt-only preset and generate a scene reference before final frame generation."
+  },
+  "scenes": [
+    {
+      "id": "clean-studio-gray",
+      "title": "干净浅灰棚拍",
+      "scenarios": [
+        "ecommerce",
+        "ad",
+        "promo"
+      ],
+      "categories": [
+        "all"
+      ],
+      "roles": [
+        "opening",
+        "proof",
+        "closing",
+        "product-hero",
+        "detail"
+      ],
+      "season_tags": [
+        "all-season"
+      ],
+      "location_tags": [
+        "studio",
+        "catalog",
+        "clean-background"
+      ],
+      "tone_tags": [
+        "clean",
+        "premium",
+        "minimal",
+        "ecommerce"
+      ],
+      "best_for": [
+        "商品开场",
+        "材质细节证明",
+        "蓬松度证明",
+        "结尾留白"
+      ],
+      "prompt": "竖屏 9:16，浅灰无缝棚拍背景，柔和大面积侧光，地面与背景过渡自然，画面干净，主体区域居中，上方和右侧有后期字幕留白，无文字、无Logo、无水印。",
+      "negative_prompt": "杂乱背景，强烈色块，可读文字，广告牌，水印，过曝，低质感",
+      "reference_image_path": "./generated/clean-studio-gray.png"
+    },
+    {
+      "id": "school-gate-autumn",
+      "title": "秋冬校门上学路",
+      "scenarios": [
+        "ecommerce",
+        "promo"
+      ],
+      "categories": [
+        "童装",
+        "儿童",
+        "童装外套",
+        "书包",
+        "鞋"
+      ],
+      "roles": [
+        "proof",
+        "lifestyle",
+        "context",
+        "daily-use"
+      ],
+      "season_tags": [
+        "autumn",
+        "winter",
+        "school-season"
+      ],
+      "location_tags": [
+        "school-gate",
+        "campus-entry",
+        "street"
+      ],
+      "tone_tags": [
+        "真实",
+        "日常",
+        "清晨",
+        "童装街拍"
+      ],
+      "best_for": [
+        "秋冬上学",
+        "耐脏百搭",
+        "校服/卫衣叠穿",
+        "日常实穿证明"
+      ],
+      "prompt": "竖屏 9:16，秋冬清晨校门外或校园门口街区，干净砖墙和栏杆背景，地面少量落叶，柔和自然光，画面真实生活感，主体位置清楚，无可读文字、无校名、无水印。",
+      "negative_prompt": "拥挤人群，可读校名，广告字，脏乱街景，危险道路，低质感",
+      "reference_image_path": "./generated/school-gate-autumn.png"
+    },
+    {
+      "id": "outdoor-playground-autumn",
+      "title": "秋冬户外玩耍",
+      "scenarios": [
+        "ecommerce",
+        "promo"
+      ],
+      "categories": [
+        "童装",
+        "儿童",
+        "童装外套",
+        "运动",
+        "鞋"
+      ],
+      "roles": [
+        "proof",
+        "lifestyle",
+        "motion",
+        "comfort"
+      ],
+      "season_tags": [
+        "autumn",
+        "winter"
+      ],
+      "location_tags": [
+        "playground",
+        "community-park",
+        "outdoor"
+      ],
+      "tone_tags": [
+        "自然光",
+        "活力",
+        "安全",
+        "日常"
+      ],
+      "best_for": [
+        "活动方便",
+        "户外玩耍",
+        "跑跳动作",
+        "手臂活动空间证明"
+      ],
+      "prompt": "竖屏 9:16，秋冬社区公园或儿童活动区，背景有滑梯、树木和柔和散景，地面干净，空间适合儿童轻跑和抬手活动，真实自然光，无文字、无水印。",
+      "negative_prompt": "危险器械，拥挤人群，画面杂乱，广告文字，肢体遮挡严重",
+      "reference_image_path": "./generated/outdoor-playground-autumn.png"
+    },
+    {
+      "id": "home-entryway-winter",
+      "title": "秋冬出门玄关",
+      "scenarios": [
+        "ecommerce",
+        "promo"
+      ],
+      "categories": [
+        "童装",
+        "服装",
+        "童装外套",
+        "鞋",
+        "包"
+      ],
+      "roles": [
+        "lifestyle",
+        "context",
+        "warmth",
+        "daily-use"
+      ],
+      "season_tags": [
+        "autumn",
+        "winter"
+      ],
+      "location_tags": [
+        "home-entryway",
+        "coat-area",
+        "home"
+      ],
+      "tone_tags": [
+        "温暖",
+        "干净",
+        "家庭日常",
+        "出门前"
+      ],
+      "best_for": [
+        "日常叠穿",
+        "秋冬出门",
+        "保暖场景",
+        "家庭生活感"
+      ],
+      "prompt": "竖屏 9:16，温暖干净的家庭玄关或衣帽区，秋冬出门前的生活氛围，木色和浅色墙面，柔和室内光，主体站位清楚，无文字、无水印。",
+      "negative_prompt": "空间拥挤，杂物堆积，可读文字，廉价影棚感，强噪点",
+      "reference_image_path": "./generated/home-entryway-winter.png"
+    }
+  ]
+}

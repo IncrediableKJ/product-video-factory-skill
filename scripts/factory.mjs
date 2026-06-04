@@ -8,14 +8,18 @@ import path from "node:path";
 const baseDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const defaultKling = path.join(codexHome, "skills", "klingai", "scripts", "kling.mjs");
+const persistentModelLibraryPath = path.join(baseDir, "assets", "model-library", "model-library.json");
+const persistentSceneLibraryPath = path.join(baseDir, "assets", "scene-library", "scene-library.json");
 
 function usage() {
   console.log(`Product Video Factory
 
 Usage:
   node factory.mjs init --out <run-dir> [--name <project-id>] [--brief <brief.json>]
+  node factory.mjs asset-match --brief <brief.json> [--out <asset-match.json>] [--write-brief]
   node factory.mjs model-library-requests --out <dir> [--age-groups <list>] [--genders <list>] [--image2-command <cmd>]
   node factory.mjs scene-library-requests --out <dir> [--scenario <ecommerce|ad|promo>] [--category <category>] [--image2-command <cmd>]
+  node factory.mjs asset-promote --type <model|scene> --id <id> --source <path> [--library <library.json>] [metadata flags]
   node factory.mjs plan-storyboard --brief <brief.json> --out <storyboard.json> [--scenario <ecommerce|ad|promo>] [--run-dir <dir>]
   node factory.mjs validate-brief --brief <brief.json>
   node factory.mjs validate-storyboard --storyboard <storyboard.json>
@@ -146,14 +150,14 @@ function templateBrief(projectId) {
     ],
     model_library: {
       enabled: true,
-      library_path: "./assets/models/model-library.json",
+      library_path: persistentModelLibraryPath,
       selected_model_id: "",
       selected_view: "front",
       selection_hint: "match product category and target audience"
     },
     scene_library: {
       enabled: true,
-      library_path: "./assets/scenes/scene-library.json",
+      library_path: persistentSceneLibraryPath,
       selection_strategy: "auto",
       preferred_scene_ids: [],
       allow_scene_reference_fusion: true
@@ -225,14 +229,14 @@ function templateStoryboard(projectId, runDir) {
     },
     model_library: {
       enabled: true,
-      library_path: "./assets/models/model-library.json",
+      library_path: persistentModelLibraryPath,
       selected_model_id: "",
       selected_view: "front",
       fusion_categories: ["服装", "童装", "女装", "男装", "内衣", "运动服", "鞋", "帽子", "配饰"]
     },
     scene_library: {
       enabled: true,
-      library_path: "./assets/scenes/scene-library.json",
+      library_path: persistentSceneLibraryPath,
       selection_strategy: "auto",
       allow_scene_reference_fusion: true
     },
@@ -271,7 +275,7 @@ function templateStoryboard(projectId, runDir) {
         scene: {
           scene_id: "",
           role: "background-reference",
-          library_path: "./assets/scenes/scene-library.json",
+          library_path: persistentSceneLibraryPath,
           reference_image_path: "",
           prompt: "",
           fusion_mode: "scene-background-fusion"
@@ -335,6 +339,355 @@ function parseList(value, fallback) {
   return String(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function listify(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  if (typeof value === "string") return parseList(value, []);
+  return [];
+}
+
+function includesMatch(list, text) {
+  const haystack = String(text || "").toLowerCase();
+  return listify(list).some((item) => {
+    const needle = String(item || "").toLowerCase();
+    return needle && (haystack.includes(needle) || needle.includes(haystack));
+  });
+}
+
+function resolveLibraryRelative(libraryPath, value) {
+  if (!value) return "";
+  if (path.isAbsolute(value)) return value;
+  return path.resolve(path.dirname(libraryPath), value);
+}
+
+function libraryRelativePath(libraryPath, file) {
+  const rel = path.relative(path.dirname(libraryPath), file).replace(/\\/g, "/");
+  return rel.startsWith(".") ? rel : `./${rel}`;
+}
+
+async function readJsonIfExists(file, fallback) {
+  if (!file || !existsSync(file)) return fallback;
+  return readJson(file);
+}
+
+function existingViewPaths(libraryPath, model) {
+  const views = model?.views || {};
+  const out = {};
+  for (const view of modelViews) {
+    const raw = views[view.id];
+    if (!raw) continue;
+    const resolved = resolveLibraryRelative(libraryPath, raw);
+    if (existsSync(resolved)) out[view.id] = resolved;
+  }
+  return out;
+}
+
+function modelTargetFromBrief(brief) {
+  const selected = selectedModelIdFromBrief(brief);
+  const ageGuess = /child|teen|young-adult|adult|mature|senior/.exec(selected)?.[0] || "";
+  const genderGuess = /female|male|neutral/.exec(selected)?.[0] || "";
+  const text = `${brief.product?.target_audience || ""} ${brief.product?.category || ""}`;
+  let age = ageGuess || "young-adult";
+  if (/儿童|孩子|小孩|童装|kid|child/i.test(text)) age = "child";
+  else if (/青少年|学生|teen/i.test(text)) age = "teen";
+  else if (/中老年|熟龄|mature/i.test(text)) age = "mature";
+  else if (/老人|银发|senior/i.test(text)) age = "senior";
+  let gender = genderGuess || "neutral";
+  if (/女性|女生|女童|女装|female|woman|girl/i.test(text)) gender = "female";
+  else if (/男性|男生|男童|男装|male|man|boy/i.test(text)) gender = "male";
+  return { id: selected, age_group: age, gender };
+}
+
+function scoreModelForBrief(brief, model, libraryPath) {
+  const category = brief.product?.category || "";
+  const audience = brief.product?.target_audience || "";
+  const scenario = normalizeScenario(brief.scenario || brief.video_type);
+  const styleText = `${brief.style?.tone || ""} ${brief.style?.lighting || ""} ${brief.style?.camera || ""}`;
+  const target = modelTargetFromBrief(brief);
+  const views = existingViewPaths(libraryPath, model);
+  let score = 0;
+  const reasons = [];
+  if (model.id === brief.model_library?.selected_model_id || listify(model.aliases).includes(brief.model_library?.selected_model_id)) {
+    score += 30;
+    reasons.push("explicit-selected-model");
+  }
+  if (model.id === target.id || listify(model.aliases).includes(target.id)) {
+    score += 24;
+    reasons.push("default-target-model");
+  }
+  if (model.age_group === target.age_group) {
+    score += 18;
+    reasons.push(`age:${target.age_group}`);
+  }
+  if (model.gender === target.gender || model.gender === "neutral") {
+    score += model.gender === target.gender ? 12 : 8;
+    reasons.push(`gender:${model.gender}`);
+  }
+  if (includesMatch(model.fit_categories, category)) {
+    score += 16;
+    reasons.push("category-fit");
+  }
+  if (includesMatch(model.audience_tags, `${audience} ${category}`)) {
+    score += 8;
+    reasons.push("audience-fit");
+  }
+  if (includesMatch(model.scenario_tags, scenario)) {
+    score += 6;
+    reasons.push(`scenario:${scenario}`);
+  }
+  if (includesMatch(model.tone_tags, styleText)) {
+    score += 4;
+    reasons.push("tone-fit");
+  }
+  score += Object.keys(views).length * 3;
+  if (views.front) reasons.push("front-view-ready");
+  if (views.side && views.back) reasons.push("three-view-ready");
+  return { model, score, reasons, views };
+}
+
+function scoreSceneForBrief(brief, scene) {
+  const scenario = normalizeScenario(brief.scenario || brief.video_type);
+  const category = brief.product?.category || "";
+  const usage = Array.isArray(brief.product?.usage_scenarios)
+    ? brief.product.usage_scenarios.join(" ")
+    : Array.isArray(brief.usage_scenarios)
+      ? brief.usage_scenarios.join(" ")
+      : "";
+  const selling = (brief.product?.selling_points || []).map((point) => `${point.name || ""} ${point.evidence || ""}`).join(" ");
+  const styleText = `${brief.style?.tone || ""} ${brief.style?.lighting || ""} ${brief.style?.camera || ""}`;
+  const desiredRoles = scenario === "ecommerce"
+    ? ["proof", "lifestyle", "context", "closing", "product-hero", "motion", "daily-use", "comfort"]
+    : scenario === "ad"
+      ? ["hook", "detail", "closing", "lifestyle", "product-hero"]
+      : ["context", "entry", "advantages", "user-value", "closing", "lifestyle"];
+  let score = 0;
+  const reasons = [];
+  if (listify(scene.scenarios).includes(scenario)) {
+    score += 16;
+    reasons.push(`scenario:${scenario}`);
+  }
+  if (includesMatch(scene.categories, category) || listify(scene.categories).includes("all")) {
+    score += listify(scene.categories).includes("all") ? 6 : 14;
+    reasons.push("category-fit");
+  }
+  const roleHits = listify(scene.roles).filter((role) => desiredRoles.includes(role));
+  if (roleHits.length) {
+    score += roleHits.length * 5;
+    reasons.push(`roles:${roleHits.join("/")}`);
+  }
+  if (includesMatch(scene.best_for, `${usage} ${selling}`)) {
+    score += 10;
+    reasons.push("usage-or-selling-fit");
+  }
+  if (includesMatch(scene.season_tags, `${usage} ${selling} ${styleText}`)) {
+    score += 4;
+    reasons.push("season-fit");
+  }
+  if (includesMatch(scene.tone_tags, styleText)) {
+    score += 4;
+    reasons.push("tone-fit");
+  }
+  return { scene, score, reasons };
+}
+
+async function assetMatch(args) {
+  const briefPath = path.resolve(requireArg(args, "brief"));
+  const brief = await readJson(briefPath);
+  const runDir = brief.run_dir || path.dirname(briefPath);
+  const modelLibraryPath = args["model-library"] && args["model-library"] !== true
+    ? path.resolve(String(args["model-library"]))
+    : brief.model_library?.library_path
+      ? resolveRunRelative(brief, brief.model_library.library_path, path.dirname(briefPath))
+      : persistentModelLibraryPath;
+  const sceneLibraryPath = args["scene-library"] && args["scene-library"] !== true
+    ? path.resolve(String(args["scene-library"]))
+    : brief.scene_library?.library_path
+      ? resolveRunRelative(brief, brief.scene_library.library_path, path.dirname(briefPath))
+      : persistentSceneLibraryPath;
+  const modelLibrary = await readJsonIfExists(modelLibraryPath, { models: [] });
+  const sceneLibrary = await readJsonIfExists(sceneLibraryPath, { scenes: [] });
+  const needsModel = shouldUseModelFusionForBrief(brief);
+  const scoredModels = (modelLibrary.models || [])
+    .map((model) => scoreModelForBrief(brief, model, modelLibraryPath))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const selectedModel = needsModel ? scoredModels.find((item) => item.views.front) || null : null;
+  const scoredScenes = (sceneLibrary.scenes || [])
+    .map((scene) => {
+      const score = scoreSceneForBrief(brief, scene);
+      const ref = scene.reference_image_path ? resolveLibraryRelative(sceneLibraryPath, scene.reference_image_path) : "";
+      return { ...score, reference_image_path: ref, has_reference_image: Boolean(ref && existsSync(ref)) };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const selectedScenes = scoredScenes.filter((item) => item.has_reference_image).slice(0, 5);
+  const missing = [];
+  if (needsModel && !selectedModel) {
+    missing.push({
+      type: "model",
+      reason: "No matching model with an existing front view found in persistent model library.",
+      suggested_command: `node ${shellQuote(path.join(baseDir, "scripts", "factory.mjs"))} model-library-requests --out ${shellQuote(path.join(runDir, "assets", "models"))}`
+    });
+  }
+  if (!selectedScenes.length) {
+    missing.push({
+      type: "scene",
+      reason: "No matching scene with a generated reference image found in persistent scene library.",
+      suggested_command: `node ${shellQuote(path.join(baseDir, "scripts", "factory.mjs"))} scene-library-requests --out ${shellQuote(path.join(runDir, "assets", "scenes"))} --scenario ${shellQuote(normalizeScenario(brief.scenario || brief.video_type))} --category ${shellQuote(brief.product?.category || "")}`
+    });
+  }
+  const applyToBrief = {
+    model_library: needsModel && selectedModel ? {
+      enabled: true,
+      library_path: modelLibraryPath,
+      selected_model_id: selectedModel.model.id,
+      selected_view: brief.model_library?.selected_view || "front",
+      selection_reason: selectedModel.reasons.join(", ")
+    } : brief.model_library || { enabled: needsModel },
+    scene_library: selectedScenes.length ? {
+      enabled: true,
+      library_path: sceneLibraryPath,
+      selection_strategy: "auto",
+      preferred_scene_ids: selectedScenes.map((item) => item.scene.id),
+      allow_scene_reference_fusion: true,
+      selection_reason: selectedScenes.map((item) => `${item.scene.id}:${item.reasons.join(",")}`).join("; ")
+    } : brief.scene_library || { enabled: true }
+  };
+  const payload = {
+    summary: "Persistent asset library matched before generation",
+    brief_path: briefPath,
+    model_library_path: modelLibraryPath,
+    scene_library_path: sceneLibraryPath,
+    needs_model: needsModel,
+    selected_model: selectedModel ? {
+      id: selectedModel.model.id,
+      score: selectedModel.score,
+      reasons: selectedModel.reasons,
+      views: selectedModel.views
+    } : null,
+    selected_scenes: selectedScenes.map((item) => ({
+      id: item.scene.id,
+      title: item.scene.title || "",
+      score: item.score,
+      reasons: item.reasons,
+      reference_image_path: item.reference_image_path
+    })),
+    missing_assets: missing,
+    apply_to_brief: applyToBrief
+  };
+  if (args["write-brief"]) {
+    brief.model_library = { ...(brief.model_library || {}), ...applyToBrief.model_library };
+    brief.scene_library = { ...(brief.scene_library || {}), ...applyToBrief.scene_library };
+    await writeJson(briefPath, brief);
+    payload.brief_updated = true;
+  }
+  const outPath = args.out && args.out !== true
+    ? path.resolve(String(args.out))
+    : path.join(runDir, "results", "01-asset-match.json");
+  await writeJson(outPath, payload);
+  const stageResultPath = await writeStageResult(runDir, "01-asset-match", payload);
+  console.log(`asset match written: ${outPath}`);
+  console.log(`Stage result: ${stageResultPath}`);
+  if (selectedModel) console.log(`model=${selectedModel.model.id} score=${selectedModel.score}`);
+  else if (needsModel) console.log("model=missing");
+  console.log(`scenes=${selectedScenes.map((item) => item.scene.id).join(",") || "missing"}`);
+  for (const item of missing) console.log(`missing ${item.type}: ${item.suggested_command}`);
+}
+
+async function assetPromote(args) {
+  const type = String(requireArg(args, "type"));
+  const id = String(requireArg(args, "id"));
+  const source = path.resolve(requireArg(args, "source"));
+  const libraryPath = path.resolve(args.library && args.library !== true
+    ? String(args.library)
+    : type === "model" ? persistentModelLibraryPath : persistentSceneLibraryPath);
+  const library = await readJsonIfExists(libraryPath, type === "model"
+    ? { provider: "image2", kind: "persistent-model-library", models: [] }
+    : { provider: "image2", kind: "persistent-scene-library", scenes: [] });
+  await fs.mkdir(path.dirname(libraryPath), { recursive: true });
+  if (type === "scene") {
+    const ext = path.extname(source) || ".png";
+    const dest = path.join(path.dirname(libraryPath), "generated", `${id}${ext}`);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(source, dest);
+    const scene = {
+      id,
+      title: args.title && args.title !== true ? String(args.title) : id,
+      scenarios: parseList(args.scenarios || args.scenario, ["ecommerce", "promo"]),
+      categories: parseList(args.categories || args.category, ["all"]),
+      roles: parseList(args.roles, ["lifestyle"]),
+      season_tags: parseList(args["season-tags"], []),
+      location_tags: parseList(args["location-tags"], []),
+      tone_tags: parseList(args["tone-tags"], []),
+      best_for: parseList(args["best-for"], []),
+      prompt: args.prompt && args.prompt !== true ? String(args.prompt) : "",
+      negative_prompt: args["negative-prompt"] && args["negative-prompt"] !== true ? String(args["negative-prompt"]) : "",
+      reference_image_path: libraryRelativePath(libraryPath, dest)
+    };
+    library.scenes = (library.scenes || []).filter((item) => item.id !== id);
+    library.scenes.push(scene);
+    await writeJson(libraryPath, library);
+    const payload = {
+      summary: "Scene asset promoted into persistent library",
+      type: "scene",
+      id,
+      library_path: libraryPath,
+      source_path: source,
+      promoted_image_path: dest,
+      record: scene
+    };
+    await writeJson(path.join(path.dirname(libraryPath), "asset-promote-result.json"), payload);
+    if (args["run-dir"] && args["run-dir"] !== true) await writeStageResult(String(args["run-dir"]), "01-asset-promote", payload);
+    console.log(`scene promoted: ${id}`);
+    console.log(`library: ${libraryPath}`);
+    console.log(`image: ${dest}`);
+    return;
+  }
+  if (type !== "model") throw new Error("--type must be model or scene");
+  const destDir = path.join(path.dirname(libraryPath), "models", id);
+  await fs.mkdir(destDir, { recursive: true });
+  const views = {};
+  for (const view of modelViews) {
+    const explicit = args[view.id] && args[view.id] !== true ? path.resolve(String(args[view.id])) : "";
+    const candidate = explicit || path.join(source, `${view.id}.png`);
+    if (!existsSync(candidate)) continue;
+    const dest = path.join(destDir, `${view.id}${path.extname(candidate) || ".png"}`);
+    await fs.copyFile(candidate, dest);
+    views[view.id] = libraryRelativePath(libraryPath, dest);
+  }
+  if (!views.front) throw new Error("model promotion requires at least a front view via --source <dir> or --front <file>");
+  const model = {
+    id,
+    aliases: parseList(args.aliases, []),
+    age_group: args["age-group"] && args["age-group"] !== true ? String(args["age-group"]) : "young-adult",
+    age_label: args["age-label"] && args["age-label"] !== true ? String(args["age-label"]) : "",
+    age_range: args["age-range"] && args["age-range"] !== true ? String(args["age-range"]) : "",
+    gender: args.gender && args.gender !== true ? String(args.gender) : "neutral",
+    fit_categories: parseList(args["fit-categories"] || args.categories || args.category, []),
+    audience_tags: parseList(args["audience-tags"], []),
+    scenario_tags: parseList(args["scenario-tags"] || args.scenarios || args.scenario, []),
+    tone_tags: parseList(args["tone-tags"], []),
+    generation_notes: args.notes && args.notes !== true ? String(args.notes) : "",
+    views
+  };
+  library.models = (library.models || []).filter((item) => item.id !== id);
+  library.models.push(model);
+  await writeJson(libraryPath, library);
+  const payload = {
+    summary: "Model asset promoted into persistent library",
+    type: "model",
+    id,
+    library_path: libraryPath,
+    source_path: source,
+    promoted_dir: destDir,
+    record: model
+  };
+  await writeJson(path.join(path.dirname(libraryPath), "asset-promote-result.json"), payload);
+  if (args["run-dir"] && args["run-dir"] !== true) await writeStageResult(String(args["run-dir"]), "01-asset-promote", payload);
+  console.log(`model promoted: ${id}`);
+  console.log(`library: ${libraryPath}`);
+  console.log(`views: ${Object.keys(views).join(",")}`);
+}
+
 function modelGenderLabel(gender) {
   if (gender === "female") return "女性";
   if (gender === "male") return "男性";
@@ -357,6 +710,8 @@ function selectedModelIdFromBrief(brief) {
   let gender = "neutral";
   if (/女性|女生|女童|女装|female|woman|girl/i.test(audience)) gender = "female";
   else if (/男性|男生|男童|男装|male|man|boy/i.test(audience)) gender = "male";
+  const usesPersistentDefault = !brief.model_library?.library_path || path.resolve(String(brief.model_library.library_path)) === persistentModelLibraryPath;
+  if (usesPersistentDefault && age === "child" && gender === "neutral") return "child-neutral-casual-6-8";
   return `${age}-${gender}`;
 }
 
@@ -837,7 +1192,7 @@ function sceneForShot(brief, scenario, role, shotId) {
   if (brief.scene_library?.enabled === false) return null;
   const scene = defaultSceneForRole(brief, scenario, role);
   if (!scene) return null;
-  const libraryPath = brief.scene_library?.library_path || "./assets/scenes/scene-library.json";
+  const libraryPath = brief.scene_library?.library_path || persistentSceneLibraryPath;
   return {
     scene_id: scene.id,
     role: "background-reference",
@@ -1012,7 +1367,7 @@ function modelSelectionForBrief(brief, view = "front") {
     required: shouldUseModelFusionForBrief(brief),
     model_id: selectedModelIdFromBrief(brief),
     view: brief.model_library?.selected_view || view || "front",
-    library_path: brief.model_library?.library_path || "./assets/models/model-library.json"
+    library_path: brief.model_library?.library_path || persistentModelLibraryPath
   };
 }
 
@@ -1167,7 +1522,7 @@ function createShot({ id, title, purpose, duration, productPresence, sourceImage
     scene: scene || {
       scene_id: "",
       role: "background-reference",
-      library_path: "./assets/scenes/scene-library.json",
+      library_path: persistentSceneLibraryPath,
       reference_image_path: "",
       prompt: "",
       fusion_mode: "scene-background-fusion"
@@ -1473,14 +1828,14 @@ function storyboardFromBrief(brief, opts = {}) {
     },
     model_library: {
       enabled: brief.model_library?.enabled !== false,
-      library_path: brief.model_library?.library_path || "./assets/models/model-library.json",
+      library_path: brief.model_library?.library_path || persistentModelLibraryPath,
       selected_model_id: selectedModelIdFromBrief(brief),
       selected_view: brief.model_library?.selected_view || "front",
       fusion_categories: ["服装", "童装", "女装", "男装", "内衣", "运动服", "鞋", "帽子", "配饰"]
     },
     scene_library: {
       enabled: brief.scene_library?.enabled !== false,
-      library_path: brief.scene_library?.library_path || "./assets/scenes/scene-library.json",
+      library_path: brief.scene_library?.library_path || persistentSceneLibraryPath,
       selection_strategy: brief.scene_library?.selection_strategy || "auto",
       preferred_scene_ids: brief.scene_library?.preferred_scene_ids || [],
       allow_scene_reference_fusion: brief.scene_library?.allow_scene_reference_fusion !== false
@@ -1576,7 +1931,7 @@ async function readModelLibrary(doc) {
 }
 
 function modelViewPathsFromLibrary(libraryInfo, modelId, view) {
-  const model = libraryInfo.library?.models?.find((item) => item.id === modelId);
+  const model = libraryInfo.library?.models?.find((item) => item.id === modelId || listify(item.aliases).includes(modelId));
   if (!model) return [];
   if (view === "all") return Object.values(model.views || {});
   return model.views?.[view] ? [model.views[view]] : [];
@@ -1628,7 +1983,11 @@ async function image2RequestForShot(doc, shot) {
   const modelView = shot.model?.view || doc.model_library?.selected_view || "front";
   const libraryInfo = await readModelLibrary(doc);
   const rawModelImages = modelId ? modelViewPathsFromLibrary(libraryInfo, modelId, modelView) : [];
-  const modelImages = rawModelImages.map((item) => path.isAbsolute(item) ? item : resolveRunRelative(doc, item));
+  const modelImages = rawModelImages.map((item) => path.isAbsolute(item)
+    ? item
+    : libraryInfo.path
+      ? path.resolve(path.dirname(libraryInfo.path), item)
+      : resolveRunRelative(doc, item));
   const sceneLibraryInfo = await readSceneLibrary(doc, shot);
   const sceneInfo = resolveSceneReference(doc, sceneLibraryInfo, shot);
   const sceneImages = doc.scene_library?.allow_scene_reference_fusion === false ? [] : sceneInfo.images;
@@ -2378,8 +2737,10 @@ async function main() {
       return;
     }
     if (command === "init") await init(args);
+    else if (command === "asset-match") await assetMatch(args);
     else if (command === "model-library-requests") await modelLibraryRequests(args);
     else if (command === "scene-library-requests") await sceneLibraryRequests(args);
+    else if (command === "asset-promote") await assetPromote(args);
     else if (command === "plan-storyboard") await planStoryboard(args);
     else if (command === "validate-brief") printValidation("brief", validateBriefDoc(await readJson(path.resolve(requireArg(args, "brief")))));
     else if (command === "validate-storyboard") printValidation("storyboard", validateStoryboardDoc(await readJson(path.resolve(requireArg(args, "storyboard")))));

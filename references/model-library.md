@@ -58,6 +58,33 @@ The image2 request will include:
 - `model_images`: selected model view image paths from `model-library.json`.
 - `fusion`: instructions to preserve garment cut, color, material, and model identity.
 
+## Reuse before generation
+
+Before generating any new model asset, run:
+
+```bash
+node {baseDir}/scripts/factory.mjs asset-match --brief ./runs/<product-id>/brief.json --write-brief
+```
+
+Only generate model requests when `results/01-asset-match.json` reports a missing model. If a matched model has the required view, reuse it for `product-model-fusion` and do not create a duplicate model.
+
+After a new model passes visual QA, promote it into the persistent library:
+
+```bash
+node {baseDir}/scripts/factory.mjs asset-promote \
+  --type model \
+  --id <model-id> \
+  --source ./runs/<product-id>/assets/models/models/<model-id> \
+  --age-group <age-group> \
+  --gender <female|male|neutral> \
+  --fit-categories "<category-list>" \
+  --audience-tags "<audience-tags>" \
+  --scenario-tags "<scenario-list>" \
+  --tone-tags "<tone-tags>"
+```
+
+Keep promoted model IDs descriptive enough for matching, such as `child-neutral-casual-6-8` or `young-adult-female-athleisure-20-30`.
+
 ## Selection heuristics
 
 - `童装`, `儿童`, `孩子` -> `child-neutral` unless user specifies gender.
@@ -67,3 +94,33 @@ The image2 request will include:
 - unspecified adult apparel -> `young-adult-neutral`.
 
 If the selected model is missing from the actual library, generate the missing model request first or choose an available model explicitly in `brief.json.model_library.selected_model_id`.
+
+## Persistent reusable assets
+
+The skill may include generated reusable model assets under:
+
+```text
+assets/model-library/model-library.json
+assets/model-library/models/<model-id>/<view>.png
+```
+
+For future videos, prefer the persistent library when it matches the product audience and category. The current reusable seed model is:
+
+| Model ID | Best match | Views | Notes |
+| --- | --- | --- | --- |
+| `child-neutral-casual-6-8` | 童装、儿童外套、羽绒马甲、上学/户外/日常叠穿 | front / side / back | Cream sweatshirt, dark jeans, simple sneakers; clean age-appropriate styling |
+
+Use these fields in `brief.json` when reusing it:
+
+```json
+{
+  "model_library": {
+    "enabled": true,
+    "library_path": "/absolute/path/to/product-video-factory/assets/model-library/model-library.json",
+    "selected_model_id": "child-neutral-casual-6-8",
+    "selected_view": "front"
+  }
+}
+```
+
+Matching should consider, in order: product target audience, product category, video scenario, desired body/pose coverage, wardrobe compatibility, and visual tone. If only the alias `child-neutral` appears in an old storyboard, map it to `child-neutral-casual-6-8` when using the persistent library.

@@ -1,0 +1,94 @@
+{
+  "provider": "image2",
+  "kind": "persistent-model-library",
+  "version": "2026-06-04",
+  "created_from_run": "black-puffer-vest-ecommerce-20260604-210749",
+  "usage": "Reusable model three-view assets for apparel product-model-fusion frames. Select by category, age group, gender, wardrobe, and video tone.",
+  "matching_policy": {
+    "primary_keys": [
+      "age_group",
+      "gender",
+      "fit_categories",
+      "audience_tags",
+      "wardrobe_base",
+      "tone_tags"
+    ],
+    "selection_order": [
+      "product target audience",
+      "product category",
+      "video scenario",
+      "desired body/pose coverage",
+      "wardrobe compatibility",
+      "visual tone"
+    ],
+    "fallback": "If no exact match exists, choose the closest age_group and neutral gender, then generate missing views before billable video generation."
+  },
+  "models": [
+    {
+      "id": "child-neutral-casual-6-8",
+      "aliases": [
+        "child-neutral",
+        "kid-neutral-casual",
+        "童装中性儿童模特"
+      ],
+      "age_group": "child",
+      "age_label": "儿童",
+      "age_range": "6-8",
+      "gender": "neutral",
+      "fit_categories": [
+        "童装",
+        "儿童外套",
+        "童装外套",
+        "马甲",
+        "羽绒马甲",
+        "卫衣",
+        "裤装",
+        "鞋"
+      ],
+      "audience_tags": [
+        "家长",
+        "上学",
+        "户外玩耍",
+        "日常叠穿",
+        "秋冬童装"
+      ],
+      "scenario_tags": [
+        "ecommerce",
+        "promo",
+        "lifestyle",
+        "product-proof"
+      ],
+      "tone_tags": [
+        "真实",
+        "清爽",
+        "日常",
+        "童装街拍",
+        "干净电商"
+      ],
+      "wardrobe_base": {
+        "top": "cream sweatshirt",
+        "bottom": "dark blue jeans",
+        "shoes": "simple white sneakers",
+        "accessories": "none"
+      },
+      "pose_coverage": [
+        "front",
+        "side",
+        "back"
+      ],
+      "generation_notes": "Natural 6-8 year old child model, healthy age-appropriate styling, no sunglasses, no mature pose. Use for garment try-on and on-body ecommerce proof shots.",
+      "avoid": [
+        "adult-like pose",
+        "fashion glamour",
+        "heavy makeup",
+        "sunglasses",
+        "mature styling"
+      ],
+      "views": {
+        "front": "./models/child-neutral-casual-6-8/front.png",
+        "side": "./models/child-neutral-casual-6-8/side.png",
+        "back": "./models/child-neutral-casual-6-8/back.png"
+      }
+    }
+  ]
+}

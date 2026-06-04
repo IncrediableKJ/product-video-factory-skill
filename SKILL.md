@@ -9,6 +9,8 @@ Build a production pipeline, not only prompt text. The agent handles product str
 
 Every stage must produce a concrete output artifact. Scripts write structured stage results under `results/` and maintain `results/index.json` so the next stage can be traced from files, not memory.
 
+Asset reuse is mandatory: before every new generation run, check the persistent model and scene libraries for suitable assets. Generate new model or scene assets only when no suitable library match exists, and promote accepted generated assets back into the persistent library before finishing the run.
+
 ## Entry Points
 
 Use this skill for:
@@ -38,69 +40,83 @@ For pure prompt-only requests, `product-video-prompt` may be enough. For any req
    ```
    Put product images under `assets/input/`. Keep all generated frames, clips, QA notes, logs, and final exports inside this run directory.
 
-2. **Create or reuse a model library for apparel**
+2. **Write `brief.json`**
+   Capture product facts, target platform, `scenario`, image paths, selling points, and constraints. Use `scenario: "ecommerce"` for 电商/带货, `scenario: "ad"` for 广告片, or `scenario: "promo"` for 宣传片. Use `references/schemas.md` only when you need the exact shape.
+
+3. **Analyze the product**
+   Identify category, audience, price position, visual memory points, top 3-5 selling points, proof moments, generation risks, and style direction. Infer missing non-critical fields from category; ask only when brand safety, product identity, or paid generation intent is unclear.
+
+4. **Match persistent model and scene assets first**
+   ```bash
+   node {baseDir}/scripts/factory.mjs asset-match --brief ./runs/<product-id>/brief.json --write-brief
+   ```
+   This checks `assets/model-library/model-library.json` and `assets/scene-library/scene-library.json`, writes `results/01-asset-match.json`, and updates `brief.json` with the selected model, selected scene IDs, and library paths. Do this before storyboard planning and before any billable image2 generation. If `missing_assets` is empty, reuse the matched assets and skip model/scene generation.
+
+5. **Create missing model assets only when needed**
    ```bash
    node {baseDir}/scripts/factory.mjs model-library-requests --out ./runs/<product-id>/assets/models
    ```
-   This writes image2 requests for model three-view assets across age groups: child, teen, young-adult, adult, mature, and senior. Submit the requests to image2, save outputs to the requested paths, and keep `model-library.json` in `assets/models/`. Read `references/model-library.md` before changing the age/gender coverage.
+   Run this only when `asset-match` reports no suitable model. It writes image2 requests for model three-view assets across age groups: child, teen, young-adult, adult, mature, and senior. Submit the minimum missing requests, save outputs to the requested paths, and keep `model-library.json` in the run. After visual QA accepts the new model, promote it:
+   ```bash
+   node {baseDir}/scripts/factory.mjs asset-promote --type model --id <model-id> --source ./runs/<product-id>/assets/models/models/<model-id> --age-group <age> --gender <gender> --fit-categories "<category-list>"
+   ```
+   Read `references/model-library.md` before changing the age/gender coverage or adding a new reusable model profile.
 
-3. **Create or reuse a scene library**
+6. **Create missing scene assets only when needed**
    ```bash
    node {baseDir}/scripts/factory.mjs scene-library-requests --out ./runs/<product-id>/assets/scenes --scenario ecommerce --category "<category>"
    ```
-   This writes reusable scene/background reference requests and `assets/scenes/scene-library.json`. When generated scene images exist, `image2-requests` can include them as scene fusion inputs; otherwise the scene prompt is still embedded in each request. Read `references/scene-library.md` before adding new presets.
+   Run this only when `asset-match` reports no suitable scenes or a desired scene exists only as a prompt without a generated reference image. Submit the minimum missing requests. After visual QA accepts a new scene, promote it:
+   ```bash
+   node {baseDir}/scripts/factory.mjs asset-promote --type scene --id <scene-id> --source ./runs/<product-id>/assets/scenes/generated/<scene-id>.png --scenario ecommerce --category "<category>" --roles "<role-list>"
+   ```
+   Read `references/scene-library.md` before adding new reusable scene presets.
 
-4. **Write `brief.json`**
-   Capture product facts, target platform, `scenario`, image paths, selling points, and constraints. Use `scenario: "ecommerce"` for 电商/带货, `scenario: "ad"` for 广告片, or `scenario: "promo"` for 宣传片. Use `references/schemas.md` only when you need the exact shape.
-
-5. **Analyze the product**
-   Identify category, audience, price position, visual memory points, top 3-5 selling points, proof moments, generation risks, and style direction. Infer missing non-critical fields from category; ask only when brand safety, product identity, or paid generation intent is unclear.
-
-6. **Plan continuous, narrated, scene-aware `storyboard.json`**
+7. **Plan continuous, narrated, scene-aware `storyboard.json`**
    ```bash
    node {baseDir}/scripts/factory.mjs plan-storyboard --brief ./runs/<product-id>/brief.json --out ./runs/<product-id>/storyboard.json
    ```
    The scenario controls shot structure: ecommerce proves selling points, ad creates an attention/memory arc, and promo builds a product/brand narrative. The storyboard must include `continuity`, per-shot `beat` transitions, `narration` decision fields, and `scene` selection so generated images and clips feel like one video. Read `references/scenario-profiles.md` when choosing or explaining a scenario.
 
-7. **Refine `storyboard.json`**
+8. **Refine `storyboard.json`**
    Each shot must include a single purpose, edit duration, source image references, beat/transition notes, selected scene, optional voiceover/subtitle text, `closing_frame_prompt`, `video_prompt`, `negative_prompt`, `image2` keyframe hints, and Kling video routing hints. `duration_sec` is the final edit length and can be uneven/fractional; `kling.generation_duration_sec` is the generated clip length and must satisfy provider limits. Keep prompts concise, natural-language, and typically under 500 Chinese characters before generated continuity/scene context is added.
 
-8. **Validate before generation**
+9. **Validate before generation**
    ```bash
    node {baseDir}/scripts/factory.mjs validate-brief --brief ./runs/<product-id>/brief.json
    node {baseDir}/scripts/factory.mjs validate-storyboard --storyboard ./runs/<product-id>/storyboard.json
    ```
 
-9. **Billable gate**
+10. **Billable gate**
    image2 frame generation and Kling video submits may spend quota. Before any real submit, show the user the run directory, shot count, expected generated frames/clips, and commands or request summary. Do not submit speculative retries.
 
-10. **Generate closing/key frames with image2**
+11. **Generate closing/key frames with image2**
    ```bash
    node {baseDir}/scripts/factory.mjs image2-requests --storyboard ./runs/<product-id>/storyboard.json
    ```
    This writes one request JSON per shot under `logs/image2-requests/`. Requests include continuity context, narration context only when narration is enabled, apparel model fusion inputs, and scene reference images when available. Submit those requests to image2, save each result to the request's `output_path`, then inspect frames visually and run media checks. If a real image2 CLI is available, pass `--image2-command <cmd>` to print executable commands.
 
-11. **Generate video clips**
+12. **Generate video clips**
    Update `storyboard.json` with accepted frame paths, then:
    ```bash
    node {baseDir}/scripts/factory.mjs kling-commands --storyboard ./runs/<product-id>/storyboard.json --stage videos
    ```
    Generate each shot independently unless the storyboard explicitly calls for one continuous clip.
 
-12. **Generate narration, TTS audio, and subtitles when enabled**
+13. **Generate narration, TTS audio, and subtitles when enabled**
    ```bash
    node {baseDir}/scripts/factory.mjs narration-assets --storyboard ./runs/<product-id>/storyboard.json --tts say --voice Tingting
    ```
    The storyboard decides `narration.delivery`: `tts`, `kling-dialogue`, `subtitle-only`, or `none`. This command generates local TTS only for `delivery=tts`. For `delivery=kling-dialogue`, it writes `audio/voiceover.txt` plus subtitles but skips local TTS because Kling generates spoken audio from the video prompt. If the storyboard is a silent concept/ad film, the command records a disabled stage result and skips TTS/subtitle generation. Use `--tts none` when only script/subtitle files are needed.
 
-13. **QA and retry**
+14. **QA and retry**
    ```bash
    node {baseDir}/scripts/factory.mjs qa-report --storyboard ./runs/<product-id>/storyboard.json --out ./runs/<product-id>/qa/report.md
    node {baseDir}/scripts/factory.mjs inspect-media --storyboard ./runs/<product-id>/storyboard.json --stage all
    ```
    If a frame or clip fails, change only the failed shot prompt/negative prompt and retry that shot.
 
-14. **Assemble final video**
+15. **Assemble final video**
     ```bash
     node {baseDir}/scripts/factory.mjs assemble --storyboard ./runs/<product-id>/storyboard.json --output ./runs/<product-id>/edit/final.mp4
     ```
@@ -118,6 +134,8 @@ For pure prompt-only requests, `product-video-prompt` may be enough. For any req
 - Do not force equal shot lengths. Allocate `duration_sec` by storyboard rhythm: hooks can be shorter, proof/action/lifestyle shots can be longer, and closings should have enough hold time for subtitles/CTA. If a provider has a minimum generation duration, generate longer and trim in assembly.
 - Decide narration and audio delivery by video style. Use `narration.mode: "auto"` and `narration.delivery: "auto"` by default: ecommerce/带货/卖点展示 usually enables voiceover with local TTS; presenter/talking-head/真人口播/模特说话 styles use Kling dialogue with `--sound on`; advertising concept films, cinematic mood pieces, and silent visual ads usually disable voiceover. Explicit `narration.enabled`, `narration.mode`, or `narration.delivery` always wins.
 - Use `scene_library` when a matching scene exists. Scene references are supporting background inputs; product and model identity have priority over scene fidelity.
+- Always run `asset-match` before storyboard planning. Reuse matched persistent assets when available; do not regenerate equivalent models or scenes just for convenience.
+- If a new model or scene is generated and passes visual QA, run `asset-promote` before finishing so the asset becomes available to future videos.
 - Keep brand/logo/price/text overlays for post-production; do not ask image2 or Kling to render readable text.
 - For frame generation, default to image2. For video generation, prefer the installed `klingai` skill and check its subcommand help before adding flags.
 - For apparel-like categories (服装, 童装, 女装, 男装, 鞋帽配饰), frame generation must use image2 `product-model-fusion`: source product image(s) + selected model three-view asset. Do not render apparel on an ungrounded synthetic person when a model library is available.
@@ -132,6 +150,7 @@ For every production run, produce or update:
 - accepted clip paths
 - model library paths and selected model ID for apparel runs
 - scene library paths and selected scene IDs
+- asset match result and any promoted persistent asset IDs
 - narration script and subtitle paths when narration is enabled; TTS audio path only when `narration.delivery=tts`
 - `results/index.json`
 - one `results/<stage>.json` per completed stage
@@ -142,6 +161,8 @@ Stage outputs:
 | Stage | Required output |
 | --- | --- |
 | init | `results/00-init.json` |
+| persistent asset match | `results/01-asset-match.json` |
+| persistent asset promotion | `assets/model-library/asset-promote-result.json` or `assets/scene-library/asset-promote-result.json`; `results/01-asset-promote.json` when `--run-dir` is passed |
 | model library | `assets/models/model-library.json`, `assets/models/requests/manifest.json`, `results/01-model-library.json` |
 | scene library | `assets/scenes/scene-library.json`, `assets/scenes/requests/manifest.json`, `results/01-scene-library.json` |
 | storyboard planning | `storyboard.json`, `results/02-storyboard-plan.json` |

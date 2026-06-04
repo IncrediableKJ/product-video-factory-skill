@@ -10,6 +10,7 @@
 .
 ├── SKILL.md                 # skill 主说明和工作流
 ├── agents/openai.yaml       # skill 展示元数据
+├── assets/                  # 可复用持久模特库和场景库
 ├── references/              # 分镜、场景、模特、质量门等参考文档
 ├── scripts/factory.mjs      # 流程脚本
 └── README.md                # 项目说明
@@ -31,6 +32,7 @@ black-puffer-vest/            # HyperFrames 示例成片工程
 - 支持非均等镜头长度，根据节奏分配每个分镜时长。
 - 支持场景库，在生图阶段融合适合的电商、广告或宣传片场景。
 - 支持模特库，按年龄段生成三视图；服装类商品可用 image2 做商品与模特融合。
+- 每次生成前先匹配持久素材库；没有合适素材时再生成，并把验收通过的新素材沉淀回库。
 - 根据视频风格决定是否需要解说词、TTS、字幕或 Kling 口播。
 - 生成 image2 请求、Kling 命令、字幕文件、QA 报告和最终 mp4。
 
@@ -49,6 +51,7 @@ git clone https://github.com/IncrediableKJ/product-video-factory-skill.git \
 ~/.codex/skills/product-video-factory/
 ├── SKILL.md
 ├── agents/openai.yaml
+├── assets/
 ├── references/
 └── scripts/factory.mjs
 ```
@@ -111,18 +114,48 @@ runs/<run-id>/assets/input/
 - `ad`：广告概念片、品牌记忆点、情绪化投放。
 - `promo`：品牌/产品宣传片、介绍型叙事。
 
-### 3. 生成模特库请求
+### 3. 匹配持久素材库
 
-服装、童装、鞋帽配饰等品类建议先生成模特库。
+每次生成前先匹配持久模特库和场景库：
+
+```bash
+node ~/.codex/skills/product-video-factory/scripts/factory.mjs asset-match \
+  --brief ./runs/<run-id>/brief.json \
+  --write-brief
+```
+
+该步骤会输出：
+
+```text
+runs/<run-id>/results/01-asset-match.json
+```
+
+如果 `missing_assets` 为空，后续直接复用已匹配的模特和场景，不需要重新生成素材。
+
+### 4. 生成缺失的模特库请求
+
+仅当 `asset-match` 报告没有合适模特时再生成。
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs model-library-requests \
   --out ./runs/<run-id>/assets/models
 ```
 
-该步骤会输出各年龄段模特三视图的 image2 请求。用 image2 生成后，把结果保存到请求中指定的路径。
+该步骤会输出各年龄段模特三视图的 image2 请求。用 image2 生成后，把结果保存到请求中指定的路径。通过 QA 的新模特需要沉淀到持久库：
 
-### 4. 生成场景库请求
+```bash
+node ~/.codex/skills/product-video-factory/scripts/factory.mjs asset-promote \
+  --type model \
+  --id <model-id> \
+  --source ./runs/<run-id>/assets/models/models/<model-id> \
+  --age-group <age-group> \
+  --gender <female|male|neutral> \
+  --fit-categories "<category-list>"
+```
+
+### 5. 生成缺失的场景库请求
+
+仅当 `asset-match` 报告没有合适场景，或已有场景只有 prompt 没有参考图时再生成。
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs scene-library-requests \
@@ -131,9 +164,19 @@ node ~/.codex/skills/product-video-factory/scripts/factory.mjs scene-library-req
   --category "童装外套"
 ```
 
-如果已有适合场景图，后续 image2 阶段会把场景作为融合参考；如果没有，流程会把场景描述写入生图提示词。
+通过 QA 的新场景需要沉淀到持久库：
 
-### 5. 生成分镜
+```bash
+node ~/.codex/skills/product-video-factory/scripts/factory.mjs asset-promote \
+  --type scene \
+  --id <scene-id> \
+  --source ./runs/<run-id>/assets/scenes/generated/<scene-id>.png \
+  --scenario ecommerce \
+  --category "<category-list>" \
+  --roles "<role-list>"
+```
+
+### 6. 生成分镜
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs plan-storyboard \
@@ -151,7 +194,7 @@ node ~/.codex/skills/product-video-factory/scripts/factory.mjs plan-storyboard \
 - Kling 图生视频提示。
 - 解说词/字幕/口播策略。
 
-### 6. 校验 brief 和分镜
+### 7. 校验 brief 和分镜
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs validate-brief \
@@ -161,7 +204,7 @@ node ~/.codex/skills/product-video-factory/scripts/factory.mjs validate-storyboa
   --storyboard ./runs/<run-id>/storyboard.json
 ```
 
-### 7. 生成 image2 请求
+### 8. 生成 image2 请求
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs image2-requests \
@@ -176,7 +219,7 @@ runs/<run-id>/logs/image2-requests/
 
 服装类商品会优先使用 `product-model-fusion` 思路：商品图、模特图、场景图一起进入 image2 请求。
 
-### 8. 生成 Kling 视频命令
+### 9. 生成 Kling 视频命令
 
 在 image2 关键帧完成并写回 `storyboard.json` 后，生成 Kling 命令：
 
@@ -194,7 +237,7 @@ runs/<run-id>/logs/kling-video-commands.sh
 
 执行脚本前请确认镜头数量、预计消耗和账号资源包。
 
-### 9. 生成解说、TTS 和字幕
+### 10. 生成解说、TTS 和字幕
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs narration-assets \
@@ -209,7 +252,7 @@ node ~/.codex/skills/product-video-factory/scripts/factory.mjs narration-assets 
 - 真人口播或模特说话风格可使用 Kling prompt 显式说话，不一定生成本地 TTS。
 - 广告概念大片或纯视觉品牌片可以不生成解说词。
 
-### 10. 检查素材和生成 QA 报告
+### 11. 检查素材和生成 QA 报告
 
 ```bash
 node ~/.codex/skills/product-video-factory/scripts/factory.mjs inspect-media \
@@ -221,7 +264,7 @@ node ~/.codex/skills/product-video-factory/scripts/factory.mjs qa-report \
   --out ./runs/<run-id>/qa/report.md
 ```
 
-### 11. 组装最终视频
+### 12. 组装最终视频
 
 无本地 TTS 时：
 
