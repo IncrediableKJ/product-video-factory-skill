@@ -1,0 +1,6 @@
+interface:
+  display_name: "Product Video Factory"
+  short_description: "商品资料到连续分镜、image2 收帧、TTS 字幕和可灵成片流水线"
+  default_prompt: "Use $product-video-factory to turn product details and images into a continuous narrated storyboard, image2 keyframes, Kling clips, burned subtitles, and a final video."
+policy:
+  allow_implicit_invocation: true
